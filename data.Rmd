@@ -1,0 +1,623 @@
+---
+title: "data"
+author: "Kristina Yaxing Zhang"
+date: "2024-03-08"
+output:
+  word_document: default
+  pdf_document: default
+---
+```{r}
+library(stargazer)
+
+```
+
+
+```{r}
+library(reshape2)
+library(dplyr)
+library(tidyr)
+library(lmtest)
+library(sandwich)
+library(knitr)
+library(broom)
+
+```
+
+
+
+```{r}
+library(readr)
+DATA_NL <- read_csv("DATA_NL /DATA_NL.csv")
+```
+```{r}
+# Dictionary-like list mapping years to their respective column names
+years_mapping <- list(
+  `2003` = list(age = 'S2001000', education = 'S2011301', income = 'S3134600'),
+  `2004` = list(age = 'S3801100', education = 'S3812201', income = 'S4799600'),
+  `2005` = list(age = 'S5401000', education = 'S5412600', income = 'S6501000'),
+  `2006` = list(age = 'S7501200', education = 'S7513500', income = 'S8496500'),
+  `2007` = list(age = 'T0008500', education = 'T0013900', income = 'T0889800'),
+  `2008` = list(age = 'T2011100', education = 'T2016000', income = 'T3003000'),
+  `2009` = list(age = 'T3601500', education = 'T3606300', income = 'T4406000'),
+  `2010` = list(age = 'T5201400', education = 'T5206700', income = 'T6055500'),
+  `2011` = list(age = 'T6651300', education = 'T6656500', income = 'T7545600'),
+  `2013` = list(age = 'T8123600', education = 'T8128900', income = 'T8976700'),
+  `2015` = list(age = 'U0001800', education = 'U0008800', income = 'U0956900'),
+  `2017` = list(age = 'U1838500', education = 'U1845400', income = 'U2857200'),
+  `2019` = list(age = 'U3437900', education = 'U3443900', income = 'U4282300'),
+  `2021` = list(age = 'U4943000', education = 'U4949600', income = 'U5753500')
+)
+
+
+# Initialize an empty dataframe to store the combined results
+combined_data <- data.frame()
+
+# Function to reshape data for a given year
+reshape_year <- function(year_data, year, DATA_NL) {
+  reshaped_data <- DATA_NL %>%
+    select(Pubid = R0000100, Sex = R0536300, Afqt = R9705300, Annual_hours = Z9065800,
+           Age = !!sym(year_data$age), 
+           Education = !!sym(year_data$education), 
+           Income = !!sym(year_data$income)) %>%
+    mutate(Year = as.integer(year)) %>%
+    filter(Age > 0) # Filter out invalid ages
+  
+  return(reshaped_data)
+}
+
+# Iterating over each year and combining the data
+for (year in names(years_mapping)) {
+  if (!is.null(years_mapping[[year]]$age)) {
+    year_data <- reshape_year(years_mapping[[year]], year, DATA_NL)
+    combined_data <- rbind(combined_data, year_data)
+  }
+}
+
+```
+
+
+# Replace negative values with NA
+```{r}
+combined_data[combined_data == -4 | combined_data == -5] <- NA
+```
+
+
+```{r}
+combined_data <- combined_data %>% filter(!is.na(combined_data$Annual_hours) & combined_data$Annual_hours != 0)
+```
+
+
+```{r}
+
+# Convert annual income to weekly wages
+combined_data$weekly_wages <- combined_data$Income / 52
+
+# Convert weekly wages to hourly wages
+combined_data$hourly_wages <- combined_data$weekly_wages  / (combined_data$Annual_hours / 52)
+
+# Filter based on hourly wages
+cleaned_data <- combined_data %>% filter(hourly_wages >= 5 & hourly_wages <= 100)
+
+cleaned_data
+
+```
+
+
+#log hourly wages
+```{r}
+combined_data<- subset(combined_data, hourly_wages > 0)
+
+combined_data$log_hourly_wages <- log(combined_data$hourly_wages)
+```
+
+```{r}
+combined_data <- na.omit(combined_data, cols = c("Education", "AFQT", "log_hourly_wages "))
+```
+
+```{r}
+# Ensure the independent variables are numeric
+combined_data$education <- as.numeric(combined_data$Education)
+combined_data$afqt <- as.numeric(combined_data$Afqt)
+```
+
+```{r}
+combined_data
+```
+
+```{r}
+summary_statistics <- combined_data %>%
+  summarise(
+    Mean_Log_Wages = mean(log_hourly_wages, na.rm = TRUE),
+    SD_Log_Wages = sd(log_hourly_wages, na.rm = TRUE),
+    N_Log_Wages = sum(!is.na(log_hourly_wages)),
+    
+    Mean_Education = mean(Education, na.rm = TRUE),
+    SD_Education = sd(Education, na.rm = TRUE),
+    N_Education = sum(!is.na(Education)),
+    
+    Mean_AFQT = mean(Afqt, na.rm = TRUE),
+    SD_AFQT = sd(Afqt, na.rm = TRUE),
+    N_AFQT = sum(!is.na(Afqt)),
+
+    Mean_Age = mean(Age, na.rm = TRUE),
+    SD_Age = sd(Age, na.rm = TRUE),
+    N_Age = sum(!is.na(Age)),
+    
+    Mean_Annualh = mean(Annual_hours, na.rm = TRUE),
+    SD_Anuualh = sd(Annual_hours, na.rm = TRUE),
+    N_Anualh = sum(!is.na(Annual_hours)),
+    
+    Mean_Income = mean(Income, na.rm = TRUE),
+    SD_Income = sd(Income, na.rm = TRUE),
+    N_Income = sum(!is.na(Income)),
+  )
+
+# To view the result
+print(summary_statistics)
+```
+
+
+
+
+```{r}
+
+library(dplyr)
+
+
+summary_statistics <- combined_data %>%
+  group_by(Sex) %>%
+  summarise(
+    Mean_Log_Wages = mean(log_hourly_wages, na.rm = TRUE),
+    SD_Log_Wages = sd(log_hourly_wages, na.rm = TRUE),
+    N_Log_Wages = sum(!is.na(log_hourly_wages)),
+    
+    Mean_Education = mean(Education, na.rm = TRUE),
+    SD_Education = sd(Education, na.rm = TRUE),
+    N_Education = sum(!is.na(Education)),
+    
+    Mean_AFQT = mean(Afqt, na.rm = TRUE),
+    SD_AFQT = sd(Afqt, na.rm = TRUE),
+    N_AFQT = sum(!is.na(Afqt)),
+
+    Mean_Age = mean(Age, na.rm = TRUE),
+    SD_Age = sd(Age, na.rm = TRUE),
+    N_Age = sum(!is.na(Age)),
+    
+    Mean_Annualh = mean(Annual_hours, na.rm = TRUE),
+    SD_Anuualh = sd(Annual_hours, na.rm = TRUE),
+    N_Anualh = sum(!is.na(Annual_hours)),
+    
+    Mean_Income = mean(Income, na.rm = TRUE),
+    SD_Income = sd(Income, na.rm = TRUE),
+    N_Income = sum(!is.na(Income)),
+  )
+
+# To view the result
+print(summary_statistics)
+
+
+
+```
+
+
+```{r}
+men_only <- filter(combined_data, Sex == 1)
+women_only <- filter(combined_data, Sex == 2)
+
+men_edu_less_16 <- filter(combined_data, Sex == 1 & Education < 16)
+men_edu_16_or_more <- filter(combined_data,Sex == 1 & Education >= 16)
+women_edu_less_16 <- filter(combined_data, Sex == 2 & Education < 16)
+women_edu_16_or_more <- filter(combined_data, Sex == 2 & Education >= 16)
+
+
+run_regression <- function(combined_data) {
+  model <- lm(log_hourly_wages ~ Education+ Afqt, data = combined_data)
+  return(summary(model))
+}
+```
+
+
+
+
+
+# Running regression on each subsample and print the results
+```{r}
+cat("Men Only:\n")
+print(run_regression(men_only))
+```
+
+
+```{r}
+cat("\nWomen Only:\n")
+print(run_regression(women_only))
+```
+
+
+
+#Men with Education <16
+```{r}
+cat("\nMen with Education < 16:\n")
+print(run_regression(men_edu_less_16))
+```
+
+
+
+```{r}
+cat("\nMen with Education > 16:\n")
+print(run_regression(men_edu_16_or_more))
+```
+
+
+```{r}
+cat("\nWomen with Education < 16:\n")
+print(run_regression(women_edu_less_16))
+```
+
+*\*\*\*
+```{r}
+cat("\nWomen with Education > 16:\n")
+print(run_regression(women_edu_16_or_more))
+```
+afqt not significant
+
+
+
+
+Men Only Regression:
+
+Education has a significant positive effect on log hourly wages, suggesting higher returns for each additional year of schooling.
+AFQT scores also positively affect log hourly wages and are significant, indicating that cognitive skills are valued in the labor market for men.
+Women Only Regression:
+
+Education, similar to the men's model, has a positive and significant effect on log hourly wages for women.
+The coefficient for AFQT is positive and significant, implying that for women, like men, cognitive skills contribute positively to their earnings.
+Men with Education < 16:
+
+Education remains a significant factor in predicting wages, but the coefficient is slightly lower than in the general male population, suggesting possibly lower returns for those with education below the standard college level.
+AFQT score does not have a significant impact on wages in this subset, which could suggest that for men with lower education levels, other factors might play a more critical role in wage determination.
+Men with Education > 16:
+
+Higher education continues to be positively correlated with wages, with a significant coefficient indicating that men with education beyond the 16-year mark experience higher wage returns.
+AFQT scores show a significant positive effect, aligning with the notion that cognitive skills paired with higher education level are valuable.
+Women with Education < 16:
+
+The impact of education on wages is significant and positive, but the magnitude of the coefficient is lower compared to women in the general population, hinting at lower wage returns for lower levels of education.
+AFQT scores do not significantly impact wages for this group, suggesting that for women with less than 16 years of education, cognitive ability may not be as strongly linked to wages as other variables.
+Women with Education > 16:
+
+The coefficient for education is significant, indicating that women with more than 16 years of education see considerable wage benefits.
+The AFQT coefficient is not significant, which could indicate that for highly educated women, the labor market rewards education itself rather than test-measured cognitive skills.2
+
+
+
+```{r}
+# Function to run regression for a given age range
+run_regression <- function(combined_data, age_min, age_max) {
+  subset_data <- combined_data %>%
+    filter(Age >= age_min & Age <= age_max)
+  
+  result <- lm(log_hourly_wages ~ Education + Afqt, data = subset_data)
+  return(summary(result))
+}
+
+# Run regressions for different age groups
+regression_20_25 <- run_regression(combined_data, 20, 25)
+regression_25_30 <- run_regression(combined_data, 25, 30)
+regression_30_35 <- run_regression(combined_data, 30, 35)
+
+```
+
+
+```{r}
+print("Regression for Ages 20-25")
+print(regression_20_25)
+```
+
+
+```{r}
+print("Regression for Ages 25-30")
+print(regression_25_30)
+
+```
+
+```{r}
+print("Regression for Ages 30-35")
+print(regression_30_35)
+```
+
+
+
+
+```{r}
+data_young <- subset(combined_data, Age <= 30)
+
+data_old <- subset(combined_data, Age > 30)
+
+```
+
+
+```{r}
+# Younger group, men only
+
+model_young_men <- lm(log_hourly_wages ~ Education + Afqt, data = data_young, subset = Sex == 1)
+summary(model_young_men)
+```
+
+
+```{r}
+# older group, men only
+model_older_men <- lm(log_hourly_wages ~ Education + Afqt, data = data_old, subset = Sex == 1)
+summary(model_older_men)
+```
+
+```{r}
+# Younger group, women only
+model_young_women <- lm(log_hourly_wages ~ Education + Afqt, data = data_young, subset = Sex == 2)
+summary(model_young_women)
+```
+
+```{r}
+# older group,women only
+model_older_women <- lm(log_hourly_wages ~ Education + Afqt, data = data_old, subset = Sex == 2)
+summary(model_older_women)
+```
+
+
+
+
+
+
+
+
+```{r}
+
+# Calculate the experience
+combined_data$Experience <- combined_data$Age - combined_data$Education - 6
+
+# Function to run regression for a given experience range
+run_regression_experience <- function(DATA_NL, exp_min, exp_max) {
+  subset_data_2 <- DATA_NL %>%
+    filter(Experience >= exp_min & Experience <= exp_max)
+  
+  result <- lm(log_hourly_wages ~ Education + Afqt, data = subset_data_2)
+  return(summary(result))
+}
+
+# Run regressions for adjusted experience groups
+regression_10_15 <- run_regression_experience(combined_data, 10, 15)
+regression_16_21 <- run_regression_experience(combined_data, 16, 21)
+regression_21_plus <- run_regression_experience(combined_data, 21, Inf)
+```
+
+
+# View regression results
+```{r}
+print("Regression for 10-15 Years of Experience")
+print(regression_10_15)
+```
+
+
+```{r}
+print("Regression for 16-21 Years of Experience")
+print(regression_16_21)
+```
+
+
+```{r}
+print("Regression for 21+ Years of Experience")
+print(regression_21_plus)
+```
+
+
+
+
+```{r}
+combined_data$unigrad <- ifelse(combined_data$Education >= 13, 1, 0)
+combined_data
+```
+
+```{r}
+summary_statistics <- combined_data %>%
+  summarise(
+    Mean_Log_Wages = mean(log_hourly_wages, na.rm = TRUE),
+    SD_Log_Wages = sd(log_hourly_wages, na.rm = TRUE),
+    
+    Mean_Education = mean(Education, na.rm = TRUE),
+    SD_Education = sd(Education, na.rm = TRUE),
+    
+    Mean_AFQT = mean(Afqt, na.rm = TRUE),
+    SD_AFQT = sd(Afqt, na.rm = TRUE),
+   
+    Mean_unigrad = mean(unigrad, na.rm = TRUE),
+    SD_unigrad = sd(unigrad, na.rm = TRUE),
+  )
+
+# To view the result
+print(summary_statistics)
+```
+
+
+```{r}
+summary_statistics <- combined_data %>%
+  group_by(Sex) %>%
+  summarise(
+    Mean_Log_Wages = mean(log_hourly_wages, na.rm = TRUE),
+    SD_Log_Wages = sd(log_hourly_wages, na.rm = TRUE),
+    
+    Mean_Education = mean(Education, na.rm = TRUE),
+    SD_Education = sd(Education, na.rm = TRUE),
+    
+    Mean_AFQT = mean(Afqt, na.rm = TRUE),
+    SD_AFQT = sd(Afqt, na.rm = TRUE),
+   
+    Mean_unigrad = mean(unigrad, na.rm = TRUE),
+    SD_unigrad = sd(unigrad, na.rm = TRUE),
+  )
+
+# To view the result
+print(summary_statistics)
+```
+
+
+```{r}
+summary_statistics <- combined_data %>%
+  group_by(unigrad) %>%
+  summarise(
+    Mean_Log_Wages = mean(log_hourly_wages, na.rm = TRUE),
+    SD_Log_Wages = sd(log_hourly_wages, na.rm = TRUE),
+    
+    Mean_Education = mean(Education, na.rm = TRUE),
+    SD_Education = sd(Education, na.rm = TRUE),
+    
+    Mean_AFQT = mean(Afqt, na.rm = TRUE),
+    SD_AFQT = sd(Afqt, na.rm = TRUE),
+   
+    Mean_unigrad = mean(unigrad, na.rm = TRUE),
+    SD_unigrad = sd(unigrad, na.rm = TRUE),
+  )
+
+# To view the result
+print(summary_statistics)
+```
+
+
+```{r}
+
+model_uni <- lm(log_hourly_wages ~ Education + Afqt + unigrad + unigrad:Education + unigrad:Afqt, data = combined_data)
+
+summary(model_uni )
+
+```
+
+```{r}
+combined_data_exp <- combined_data[combined_data$Experience > 15, ] 
+model_uni_exp <- lm(log_hourly_wages ~ Education + Afqt + unigrad + unigrad:Education + unigrad:Afqt, data = combined_data_exp)
+summary(model_uni_exp)
+```
+
+```{r}
+combined_data_exp2 <- combined_data[combined_data$Experience < 15, ] 
+model_uni_exp2 <- lm(log_hourly_wages ~ Education + Afqt + unigrad + unigrad:Education + unigrad:Afqt, data = combined_data_exp2)
+summary(model_uni_exp2)
+```
+
+
+
+
+```{r}
+# for men only
+combined_data_men <- combined_data[combined_data$Sex == 1, ] 
+model_uni_men <- lm(log_hourly_wages ~ Education + Afqt + unigrad + unigrad:Education + unigrad:Afqt, data = combined_data_men)
+summary(model_uni_men)
+
+```
+Education (Education): The coefficient is positive and significant (p < 0.05), suggesting that higher levels of education are associated with higher log wages for men. This is consistent with the expectation that education increases productivity, which in turn is rewarded in the labor market.
+
+Cognitive Ability (AFQT): The coefficient is negative and not statistically significant (p > 0.05), which is not in line with the typical expectation that higher cognitive abilities are associated with higher wages. The lack of significance suggests that, for men in this sample, AFQT scores may not be a strong predictor of wage levels.
+
+University Graduate (unigrad): The coefficient is negative but not statistically significant, indicating that simply being a university graduate may not have a distinct impact on wages separate from the number of years of education completed.
+
+Interaction between University Graduate and Education (unigrad:Education): The coefficient is negative and significant, which could imply that additional years of education beyond achieving a university degree may have diminishing returns in terms of wages for men, or that the effect of education on wages is less pronounced for university graduates compared to those with less education.
+
+Interaction between University Graduate and AFQT (unigrad:AFQT): The coefficient is positive and significant, suggesting that for university graduates, higher AFQT scores may be more strongly correlated with wages compared to non-graduates.
+
+
+```{r}
+# for women only
+combined_data_women <- combined_data[combined_data$Sex == 2, ]
+model_uni_women <- lm(log_hourly_wages ~ Education + Afqt + unigrad + unigrad:Education + unigrad:Afqt, data = combined_data_women)
+summary(model_uni_women)
+```
+
+
+
+
+
+
+
+
+```{r}
+combined_data$female <- ifelse(combined_data$Sex == 2, 1, 0)
+```
+
+```{r}
+
+model_fem <- lm(log_hourly_wages ~ Education + Afqt + female + female:Education + female:Afqt, data = combined_data)
+
+summary(model_fem)
+
+```
+Education: The coefficient for education is significant and positive, indicating that an additional year of education is associated with an increase in the log of hourly wages.
+
+AFQT: The coefficient for AFQT scores is also significant and positive, suggesting that higher AFQT scores are associated with higher log hourly wages.
+
+Female: The 'female' coefficient is significant and positive, implying that being female is associated with an increase in log hourly wages, holding other factors constant.
+
+Education:female: The interaction term between education and female is significant and negative. This suggests that the positive impact of education on log hourly wages is less for females than for males.
+
+Afqt:female: The interaction term between AFQT scores and female is significant but has a negative coefficient, indicating that the positive impact of AFQT scores on log hourly wages is less for females compared to males.
+
+
+
+```{r}
+
+clustered_covariance <- vcovHC(model_fem, type = "HC1", cluster = "group", group = combined_data$Pubid)
+
+clustered_summary <- coeftest(model_fem, vcov = clustered_covariance)
+
+print(clustered_summary)
+
+
+```
+
+
+
+```{r}
+
+combined_data$lowexp <- ifelse(combined_data$Experience <= 5, 1, 0)
+
+pooled_regression_model <- lm(log_hourly_wages ~ Education + Afqt + lowexp + lowexp:Education + lowexp:Afqt, data = combined_data)
+
+summary(pooled_regression_model)
+
+```
+Education is a highly significant predictor of log hourly wages, indicating that as the education level increases, the log hourly wages tend to increase.
+The AFQT score is also significant, showing that higher cognitive abilities, as measured by the AFQT, are associated with higher log hourly wages.
+The variable lowexp (low experience, assumedly for those with 5 years or less of experience) is significant, suggesting that less experience is linked with lower wages, but this effect is mitigated by education and AFQT scores, as indicated by the interaction terms.
+The interaction between low experience and education (Education:lowexp) is negatively significant, which could mean that the positive effect of education on wages is less pronounced for those with lower experience.
+The interaction between low experience and AFQT scores (Afqt:lowexp) is significant, indicating that the relationship between cognitive ability and wages is different for those with low experience compared to those with more experience.
+
+
+```{r}
+# Separate data by gender for additional regressions
+# Assuming that 'Sex' is coded as 1 for males and 2 for females
+data_men <- combined_data %>% filter(Sex == 1)
+data_women <- combined_data %>% filter(Sex == 2)
+
+# Run the regression for men
+men_regression_model <- lm(log_hourly_wages ~ Education + Afqt + lowexp + lowexp:Education + lowexp:Afqt, data = data_men)
+
+# Summary of the men's regression
+summary(men_regression_model)
+
+```
+
+All the predictors, including the interaction terms, are significant for men, except for the interaction between low experience and AFQT scores (p > 0.05), which is not significant. This suggests that while education and low experience have a strong relationship with log hourly wages, the impact of AFQT scores doesn't differ significantly between men with less or more experience.
+
+
+
+```{r}
+# Run the regression for women
+women_regression_model <- lm(log_hourly_wages ~ Education + Afqt + lowexp + lowexp:Education + lowexp:Afqt, data = data_women)
+
+# Summary of the women's regression
+summary(women_regression_model)
+
+```
+
+For women, the predictors are similar to the pooled model, with significant effects of education, AFQT, and low experience on log hourly wages.
+The interaction between low experience and education (Education:lowexp) for women is significantly negative, similar to the pooled regression, suggesting that the positive effect of education on wages is less for those with low experience.
+The interaction between low experience and AFQT (Afqt:lowexp) for women is also negatively significant, indicating that the effect of cognitive abilities on wages is also less for women with low experience.
+
+
+
